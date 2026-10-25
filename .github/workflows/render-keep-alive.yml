@@ -2,8 +2,8 @@ name: Render health check
 
 'on':
   schedule:
-    # Every 10 minutes, away from the start of the hour (UTC).
-    - cron: '7,17,27,37,47,57 * * * *'
+    # Every 5 minutes, away from the start of the hour (UTC).
+    - cron: '3,8,13,18,23,28,33,38,43,48,53,58 * * * *'
   workflow_dispatch:
 
 permissions: {}
@@ -27,12 +27,17 @@ jobs:
         shell: bash
         run: |
           python3 - <<'PY'
+          import datetime
           import json
           import os
           import sys
           import time
           import urllib.error
           import urllib.request
+
+          started = time.monotonic()
+          print('Trigger:', os.environ.get('GITHUB_EVENT_NAME', 'local'))
+          print('Started (UTC):', datetime.datetime.now(datetime.timezone.utc).isoformat())
 
           class NoRedirect(urllib.request.HTTPRedirectHandler):
               def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -63,6 +68,7 @@ jobs:
                       if not isinstance(payload, dict) or payload.get('status') != 'healthy':
                           raise ValueError('Expected status=healthy')
                   print('Health check passed: HTTP 200, status=healthy.')
+                  print(f'Elapsed: {time.monotonic() - started:.2f}s')
                   sys.exit(0)
               except (urllib.error.URLError, OSError, ValueError) as error:
                   reason = ('HTTP ' + str(error.code)
