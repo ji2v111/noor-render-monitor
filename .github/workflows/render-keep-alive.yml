@@ -1,0 +1,78 @@
+name: Render health check
+
+'on':
+  schedule:
+    # Every 10 minutes, away from the start of the hour (UTC).
+    - cron: '7,17,27,37,47,57 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: render-health-check
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    # Automatic runs are limited to public repos to avoid private-repo charges.
+    # A manual run in a private repo still consumes its Actions allowance.
+    if: github.event_name == 'workflow_dispatch' || github.event.repository.private == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      # Public service address from the documentation; confirm it in Render.
+      RENDER_HEALTH_URL: https://nooralqabasv1-0.onrender.com/health
+    steps:
+      - name: Request and verify health
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          import time
+          import urllib.error
+          import urllib.request
+
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
+
+          opener = urllib.request.build_opener(NoRedirect())
+          request = urllib.request.Request(
+              os.environ['RENDER_HEALTH_URL'],
+              method='GET',
+              headers={
+                  'Accept': 'application/json',
+                  'Cache-Control': 'no-cache',
+                  'User-Agent': 'NoorAlQabas-HealthCheck/1.0',
+              },
+          )
+
+          for attempt in range(1, 4):
+              try:
+                  with opener.open(request, timeout=90) as response:
+                      if response.status != 200:
+                          raise ValueError('Expected HTTP 200')
+                      if response.headers.get_content_type() != 'application/json':
+                          raise ValueError('Expected a JSON response')
+                      body = response.read(4097)
+                      if len(body) > 4096:
+                          raise ValueError('Health response is too large')
+                      payload = json.loads(body)
+                      if not isinstance(payload, dict) or payload.get('status') != 'healthy':
+                          raise ValueError('Expected status=healthy')
+                  print('Health check passed: HTTP 200, status=healthy.')
+                  sys.exit(0)
+              except (urllib.error.URLError, OSError, ValueError) as error:
+                  reason = ('HTTP ' + str(error.code)
+                            if isinstance(error, urllib.error.HTTPError)
+                            else type(error).__name__)
+                  # Never print response bodies, headers, or credentials.
+                  print(f'Attempt {attempt}/3 failed ({reason}).')
+                  if attempt < 3:
+                      time.sleep(10)
+
+          print('Health check failed after 3 attempts.')
+          sys.exit(1)
+          PY
